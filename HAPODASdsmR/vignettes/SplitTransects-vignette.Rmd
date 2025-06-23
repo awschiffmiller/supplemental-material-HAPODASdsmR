@@ -1,0 +1,220 @@
+---
+title: "Splitting Line Transects for use in Density Surface Models-vignette"
+author: Abigail Schiffmiller
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Splitting Line Transects for use in Density Surface Models-vignette}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## The Data:  
+  In summer 2019, the Marine Mammal Laboratory (MML) conducted a ship-board line transect survey of southeast Alaska (SEAK) with the goal of estimating the distribution and abundance of harbor porpoise in response to evidence of multiple populations and high bycatch mortality in the region (Goetz et al. 2019). In the course of the MML’s 2019 Distribution and Abundance of Southeast Alaska Harbor Porpoise (HAPODAS) survey, all marine mammal sightings (ten species) were recorded, but only five potentially had enough sightings to calculate abundance estimates: harbor porpoise (Phocoena phocoena), Dall’s porpoise (Phocoenoides dalli), humpback whale (Megaptera novaeangliae), harbor seal (Phoca vitulina), and sea otter (Enhydra lutris)(Goetz et al. 2019).This data is now being used to create more accurate and precise population abundance estimates for humpback whales, harbor porpoise, and Dall's porpoise in SEAK. The raw data has 18,142 rows of data of 86 variables.
+
+
+## The analysis:  
+
+  To create habitat and species specific distribution predictions Density Surface model will be preformed on the data. To prepare the data for this model, the line transects must be divided into segments of equal length to fit into the prediction grid. This is the purpose of the package `HAPODASdsmR`. This vignette will use the "short" dataset which is a 150 row subset of the full HAPODAS dataset starting at row 600 and with "label", "onoff", and "section" edited to represent conditions of a larger dataset better.
+  
+```{r setup}
+library(HAPODASdsmR)
+short <- short
+```
+
+```{r merge_shortsegs, echo=FALSE}
+
+
+merge_shortsegs <- function(data, cutoff = 1000){
+   df <- data
+   cutoff <- cutoff
+   dfmod <- df$mod
+   dfsegnum <- df$segnum
+   df$sec_label <- paste(df$label, df$section, sep = "_")
+   uniquelabel <- unique(df$sec_label)
+   newsegnum <- 0
+
+   df$seg_length <- stats::ave(dfmod,
+                            dfsegnum,
+                             FUN = max)
+
+   print("all transects:")
+   progress_bar = utils::txtProgressBar(min=0, max=length(uniquelabel), style = 3, char="=")
+
+   for(j in 1:length(uniquelabel)){
+      tempdf <- subset(df, sec_label == uniquelabel[j])
+      mod <- tempdf$mod
+      segnum <- tempdf$segnum
+         if(tempdf$seg_length[1] >= cutoff){
+
+                  #print("each transect:")
+                  #progress_bar = utils::txtProgressBar(min=0, max=length(segnum), style = 3, char="=")
+            for(i in seq_along(segnum)){
+               if(tempdf$seg_length[i] < cutoff){
+               segnum [i]<-(segnum[i]-1)
+               }
+               else{segnum [i]<-segnum[i]}
+                  #utils::setTxtProgressBar(progress_bar, value = i)
+            }
+         tempdf$segnum <- as.integer(segnum)
+         }
+      newsegnum <- c(newsegnum, tempdf$segnum)
+      utils::setTxtProgressBar(progress_bar, value = j)
+   }
+   df$segnum <- newsegnum[-1]
+
+   unique_segnum <- unique(df$segnum)
+   Effort <- 0
+   for(k in 1: length(unique_segnum)){
+      temp <- subset(df,segnum == unique_segnum[k] )
+      Effort <- c(Effort,rep((sum(unique(temp$seg_length))),length.out = nrow(temp)))
+   }
+
+   df$Effort <- Effort[-1]
+   df <- df[,c(1:13,15)]
+}
+
+
+
+
+```
+
+  The first step is to isolate only the necessary columns of data from the 86 column raw data. This has already been done using the function `convertHAPODAS` to produce the 10 row "micro" dataset and the 150 row "short" dataset that are included in this package test functions. This function also calculated the difference in secconds between each datapoint and added the column "tdiff" and added a column "orriginal" which Identifies these as original datapoints.
+  
+  The data structure is as follows:
+  
+```{r head short}
+head(short)
+summary(short)
+```
+
+  Where: 
+  
+  * datetime: POSIXct class, date and time of datapoint
+
+  * lats: numeric class, decimal latitude of datapoint
+
+  * longs: numeric class, decimal longitude of datapoint
+
+  * label: factor class, unique line label for transect
+
+  * onoff: factor class, on or off effort designation for line 
+
+  * section: factor class, section of line which shows when line has more than one 'on' effort section 
+
+  * travel: numeric class, distance traveled since last data point IN METERS, converted from Nautical miles by multiplying by 1852 (m/nm)
+
+  * tdiff: numeric class, time difference in seconds to next point
+
+  * orriginal: Logical class, designates row as an orriginal datapoint
+  
+  
+## Interpolate:  
+  
+  The first task is to interpolate a location for every second of travel along the line between original datapoints using `interp_by_secs`. This will allow segmentation to produce, as close as possible, to uniform lenth segments. Interpolated data points are idenified by the designation "FALSE" in the column "orriginal." This also divides the distance traveled between original datapoints by the number of seconds between them to get the distance traveled in meters between interpolated points. This produces a dataset 10,830 rows long from one that started with only 150 rows!
+
+```{r interp}
+tictoc::tic()
+short_interp <- interp_by_secs(short)
+tictoc::toc()
+summary(short_interp$orriginal)
+summary(short_interp$travel)
+```
+
+
+## cumsum:  
+
+  The second task is to compute the cumulative distance traveled along each section of transect line at every point. Sections are identified by "label" which idetifies the location and type of each transect using an alpha-numeric format, "onoff" which identifies the section of line as 'on' or 'off' effort for data collection, and "section" which shows when line has more than one 'on' effort section.
+  
+```{r cumsum}
+short_interp$cum_dist <- cumsum_by_group(short_interp$travel, 
+                                         grpVarLst = list(short_interp$label,
+                                                          short_interp$onoff,
+                                                          short_interp$section))
+summary(short_interp$cum_dist)
+```
+
+
+## define segments:  
+
+  The third task is to define the length of desired segments (in meters) and identify the start and endpoints of all segments within all line sections using `seg_assign`. This uses a modulus operator to identify when the cumulative distance has reached the defined segment length and start a new segment. This function removes all 'OFF effort' rows (where cumulative distance traveled = 0m) before assigning segment endpoints.
+  
+```{r seg assignment, }
+tictoc::tic()
+short_segs <- seg_assign(short_interp, seg.length = 1000)
+tictoc::toc()
+head(short_segs)
+table(short_segs$cutpoint)
+```
+
+
+  Next, each segment of each section is given a unique ID number using `seg_num`.
+
+```{r seg num}
+short_segs <- seg_num(short_segs)
+table(x=short_segs$segnum,y=short_segs$label)
+```
+
+In some cases two endpoints will be identified for a segment. The second of these is the correct endpoint and the first one must be identified and removed by hand. This data set does not have any such instances.
+
+
+```{r finding connections}
+
+rownames(short_segs) = seq(length=nrow(short_segs))
+
+cutpoints_sort <- short_segs[which(short_segs$cutpoint != "0"),]
+
+endpoints <- table(cutpoints_sort$segnum)
+segnumvect <- as.data.frame(endpoints)
+# View(segnumvect)
+which(segnumvect$Freq > 2) # since no segment has more than two cutpoints, none has two 'END' points
+```
+
+Some of the segments may be significanly shorter than the desired segment length but none are longer. It would be better to have a 2 tailed distribution centered on the desiered segment length than one heavily skewed, so segments shorter than 1/2 the desired segment length will be joined to the previous segment as long as the previous segment is on the same transect line and section. *In this example case there is no change.*
+
+```{r merge short end segments to previous}
+hist(short_segs$mod[(short_segs$cutpoint == 'End')])
+
+tictoc::tic()
+short_segsmerge <- merge_shortsegs(short_segs, cutoff = 1000)
+tictoc::toc()
+
+hist(short_segsmerge$mod[(short_segsmerge$cutpoint == 'End')])
+
+```
+
+The start and end points of each segment are defined but the centerpoint of each segment is needed to pull the appropriate environmnental data. These centerpoints must be found AFTER merging short segments to the previous ones so that the center point found of extra long segments are correct. 
+```{r find segment centers}
+tictoc::tic()
+short_segscenter <- seg_centers(short_segsmerge)
+tictoc::toc()
+
+```
+
+
+## only key points:  
+
+Finally, interpolated points that are not segment start or end points are discarded. This cuts our 10830 row dataset into a 200 row dataset!
+
+```{r segmentize}
+
+shortSegmentsV <- segmentize(short_segscenter)
+summary(shortSegmentsV)
+
+```
+
+
+
+#### References:
+
+Goetz, Kim, Alexandre Zerbini, Charlotte Boyd, Ü Adam, Chris Hoefer, Karin Forney, and Annie Masterman. 2019. “Distribution and Abundance of Southeast Alaska Harbor Porpoise.”
+
+
+
+

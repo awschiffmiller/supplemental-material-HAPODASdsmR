@@ -1,0 +1,99 @@
+---
+title: "Create 'seg-data' 'obs_data' and 'dist_data' for DSM analysis"
+author: Abigail Schiffmiller
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Create 'seg-data' 'obs_data' and 'dist_data' for DSM analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## The Data:
+
+In summer 2019, the Marine Mammal Laboratory (MML) conducted a ship-board line transect survey of southeast Alaska (SEAK) with the goal of estimating the distribution and abundance of harbor porpoise in response to evidence of multiple populations and high bycatch mortality in the region (Goetz et al. 2019). In the course of the MML's 2019 Distribution and Abundance of Southeast Alaska Harbor Porpoise (HAPODAS) survey, all marine mammal sightings (ten species) were recorded, but only five potentially had enough sightings to calculate abundance estimates: harbor porpoise (Phocoena phocoena), Dall's porpoise (Phocoenoides dalli), humpback whale (Megaptera novaeangliae), harbor seal (Phoca vitulina), and sea otter (Enhydra lutris)(Goetz et al. 2019).This data is now being used to create more accurate and precise population abundance estimates for humpback whales, harbor porpoise, and Dall's porpoise in SEAK. The raw data has 18,142 rows of data of 86 variables.
+
+## The analysis:
+
+To create habitat and species specific distribution predictions Density Surface Modeling will be preformed on the data. To prepare the data for this model, the line transects have been divided into segments of equal length to fit into the prediction grid. This is part of the purpose of the package `HAPODASdsmR`. The vignette 'SplitTransects-vignette' shows the process of putting the raw HAPODAS data into segments of the specified length.
+
+This vignette is the next step: creating "segment data" and "distance data" tables to be linked with the "observation data" table. As with the 'SplitTransects' vignette, this vignette will use the "short" dataset which is a 150 row subset of the full HAPODAS dataset starting at row 600 and with "label", "onoff", and "section" edited to represent conditions of a larger dataset better.
+
+All three of these tables can be passed to the function `makeSP` which will produce a SpatialPointsDataFrame (as is necessary for analysis) with coordinates `x`, and `y` and Alaska Equal Area Albers projection (by default, can be changed with `proj` argument).
+
+```{r setup}
+library(HAPODASdsmR)
+library(sp)
+library(rgdal)
+akalbers <- akalbers
+```
+
+### Segment Data:
+
+The 'Segment Data' table has a single row for each *segment* of transect. Currently the single row is written as the *center point* of each segment. Each row has location and time information as well as transect id (`Transect.Label`), segment id (`Segment.Label`), and segment length (`Effort`). It might also include environmental covariate information (but does not in this vignette *need to write function to add those separately*). This is what is used by the `segment.data` argument for `dsm`. The initial data used (`shortSegmentsV`) to make the 'segdata' is what is produced by the 'SplitTransects' vignette.
+
+```{r segdata}
+shortSegmentsvv <- shortSegmentsV
+shortSegmentsvv <- shortSegmentsvv[which((as.character(shortSegmentsvv$onoff) != "OFF")),]
+short_Segdata <- Segdata(shortSegmentsvv)
+str(short_Segdata)
+summary(short_Segdata)
+```
+
+```{r segdata sp}
+short_Segdata_SP <- makeSP(dataset = short_Segdata,
+                           coordx = short_Segdata$longitude, 
+                           coordy = short_Segdata$latitude)
+str(short_Segdata_SP)
+summary(short_Segdata_SP)
+```
+
+### Distance Data:
+
+The 'Distance Data' table has a single row for each *observation* of an animal along the transect. Each row has location and time information as well as transect id (`label`), species, group size, distance from the transect line, and covariated to be used when fitting the detetion function with `Distance`. The detection function produced from this is what is used by the `ddf.obj` argument for `dsm`. The initail data used to make the 'Distdata' is the 'short_hapodas' data, which is the shortened version of the raw HAPODAS data.
+
+```{r Distdata}
+short_hapodas <- short_hapodas
+on_effort_short <- short_hapodas[which((as.character(short_hapodas$ONOFF)) != "OFF"),]
+obsonly_short <- on_effort_short[which((as.character(on_effort_short$SIGHTOBS)) != "999"),]
+obsonly_short <- on_effort_short[which((as.character(on_effort_short$SIGHTOBS)) != "907"),]
+short_Distdata <- Distdata(data=short_hapodas, covariates = list(CUE=short_hapodas$CUE,
+                                                                SIGHTOBS=short_hapodas$SIGHTOBS,
+                                                                Visibility=short_hapodas$Visibility,
+                                                                BEAUFORT=short_hapodas$BEAUFORT,
+                                                                FOGRAIN=short_hapodas$FOGRAIN))
+str(short_Distdata)
+summary(short_Distdata)
+```
+
+```{r Distdata sp}
+short_Distdata_SP <- makeSP(dataset = short_Distdata,
+                           coordx = short_Distdata$longs, 
+                           coordy = short_Distdata$lats)
+str(short_Distdata_SP)
+summary(short_Distdata_SP)
+```
+
+### Observation Data:
+
+The 'Observation Data' table has a single row for each *observation* of an animal along the transect. Each row has location and time information as well as transect id (`label`), species, group size, distance from the transect line, and covariated to be used when fitting the detetion function with `Distance`. The detection function produced from this is what is used by the `ddf.obj` argument for `dsm`. The initail data used to make the 'Obsdata' is the 'short_hapodas' data, which is the shortened version of the raw HAPODAS data.
+
+```{r Obsdata}
+short_Obsdata <- Obsdata(short_Distdata, short_Segdata)
+str(short_Obsdata)
+summary(short_Obsdata)
+```
+
+```{r Obsdata sp}
+short_Obsdata_SP <- makeSP(dataset = short_Obsdata,
+                           coordx = short_Obsdata$longs, 
+                           coordy = short_Obsdata$lats)
+str(short_Obsdata_SP)
+summary(short_Obsdata_SP)
+```

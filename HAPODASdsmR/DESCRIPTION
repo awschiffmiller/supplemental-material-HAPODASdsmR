@@ -1,0 +1,23 @@
+Package: HAPODASdsmR
+Type: Package
+Title: Process HAPODAS Data For DSM
+Version: 0.3.0
+Authors@R: person("Abigail",  "Schiffmiller", email= "awschiffmiller@alaska.edu", role = c("aut", "cre"))
+Maintainer: <awschiffmiller@alaska.edu>
+Description: 
+    This package interpolates the location every second along a line transect, then splits each line section into segments of a chosen length (in meters). 
+    (Later additions to this package will have the option to split line transect sections so that an 'odd length' segment (due to sections not being perfectly divisable by the segment length) will be in the center of the section so that the segments onlong the edges are of uniform size.)
+    It then processes raw HAPODAS data into 'distdata' and 'segdata' tables necessary for DSM. The `hbw-DF_DSM` vignette takes the resultant data and runs a DSM using a soapfilm smoother for southeast Alaska.
+Suggests: soapChecker, tictoc, testthat (>= 3.0.0), knitr, rmarkdown
+License: GPL-2
+Encoding: UTF-8
+LazyData: true
+Config/testthat/edition: 3
+RoxygenNote: 7.2.3
+Depends: R (>= 2.10)
+VignetteBuilder: knitr
+Imports: sp, Distance, dsm, lubridate, ggplot2, mgcv, rgeos, utils,
+        rgdal
+NeedsCompilation: no
+Packaged: 2021-06-01 21:05:13 UTC; aschi
+Author: Abigail Schiffmiller [aut, cre]

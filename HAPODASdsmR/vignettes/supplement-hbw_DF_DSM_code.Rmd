@@ -1,0 +1,897 @@
+---
+title: "hbw_DF_DSM"
+author: "Abigail Schiffmiller"
+date: "2025-06-23"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## libraries
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+This is based off the Dolphin dsm example from the distance sampling website: [`http://examples.distancesampling.org/dsm-line-dolphins/mexico-analysis.html`]
+
+```{r libraries , eval=FALSE, include= TRUE}
+# install.packages(c("dsm", "Distance", "knitr", "distill", "ggplot2", "rgdal",
+#                    "maptools", "plyr", "tweedie"))
+
+#library(HAPODASdsmR)
+library(Distance)
+library(dsm)
+library(ggplot2)
+library(knitr)
+library(rgdal)
+library(maptools)
+library(tweedie)
+library(mgcv)
+library(rgeos)
+library(broom)
+library(plyr)
+library(dplyr)
+
+
+```
+
+# set up files and objects needed:
+
+## data files:
+
+### hbw DSM Data:
+
+This is the hbw_Dist, hbw_Obs, and hapodas_Segdata, as well as hbw_hr_cds.05 and hbw_hr_mcds_CUE_SIGHTOBS detection function (ddf) objects.
+
+-   hapodas_Segdata: 2km segments(+/-50% since shortes segments merged to previous), no 'off effort' data, Tracklines and transit lines, each segment identified by it's centerpoint.
+
+-   hbw_Dist: all "on effort" observer sightings of hbw and associated sighting covariates used to produce detection funcitons
+
+-   hbw_Obs: all "on effort" observer sightings of hbw with *segment* they are associated with
+
+```{r hbw DSM data, eval=FALSE, include= TRUE}
+load("~/UAF/MS/data and analysis/HAPODAS/HAPODAS DATA/hbwDSMdata2km.Rdata")
+
+#save(hbw_Dist, hbw_Obs, hapodas_Segdata, hbw_hr_cds.05, hbw_hr_mcds_CUE_SIGHTOBS,file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DATA/hbwDSMdata2km.Rdata")
+```
+
+```{r load akalbers, eval=FALSE, include= TRUE}
+#load("~/UAF/MS/data and analysis/HAPODAS/HAPODAS DATA/hbwDSMdata2km.Rdata")
+load("~/UAF/MS/data and analysis/HAPODAS/HAPODASdsmR/data/akalbers.rda")
+```
+
+Because the sightings were truncated by the detection funciton, the observation data table needs to truncate the same sightings:
+
+```{r truncate-obs, eval=FALSE, include= TRUE}
+hbw_Obs_t <- hbw_Obs[hbw_Obs$distance <= hbw_hr_mcds_CUE_SIGHTOBS$ddf$meta.data$width, ]
+
+```
+
+### Covariate Seg[ment]data
+
+slope, distance to shore, depth (bathymetry), log Depth, and channel type at 2x2km resolution \*\*from ArcGIS: load from from hapodas_segdata
+
+```{r load Segdata with covariates **from ArcGIS, eval=FALSE, include= TRUE}
+ #=================     
+      # SegdataCovs <- data.frame(hapodas_Segdata,
+      #                          slope = SegdataCovs$slope,
+      #                          d2s = SegdataCovs$d2s,
+      #                          DEPTH = SegdataCovs$DEPTH,
+      #                          logDEPTH = SegdataCovs$logDEPTH,
+      #                          ChannelType = SegdataChannel$ChanelType)
+ 
+
+#  save(SegdataCovs, file="~/UAF/MS/data and analysis/HAPODAS/HAPODAS DATA/SegdataCovs.Rdata" )
+
+load( file="~/UAF/MS/data and analysis/HAPODAS/HAPODAS DATA/SegdataCovs.Rdata" )
+
+```
+
+### SPATIAL hbw DSM data
+
+```{r Seg/covSeg/Obs SP, eval=FALSE, include= TRUE}
+segSP <- makeSP(dataset = hapodas_Segdata,
+                coordx = hapodas_Segdata$longitude,
+                coordy = hapodas_Segdata$latitude)
+
+                 
+covSegSP <- makeSP(dataset = SegdataCovs,
+                coordx = SegdataCovs$longitude,
+                coordy = SegdataCovs$latitude)
+
+hbw_obsSP <- makeSP(dataset=hbw_Obs_t,
+                coordx = hbw_Obs_t$longs,
+                coordy = hbw_Obs_t$lats)
+
+
+
+```
+
+## shape files:
+
+### survey area/maps
+
+#### Plot survey area and lines, SP transform:
+
+```{r plot survey area and lines, eval=FALSE, include= TRUE}
+SEAK<-readOGR(dsn="C:/Users/aschi/Dropbox/My PC (DESKTOP-3OIUQ56)/Documents/UAF/MS/data and analysis/maps+spatial data/HAPODAS GIS/GISFILES",layer="Coastal_Land_Area_Dissolve") # import coastline shapeobjects
+
+SEAK <- spTransform(SEAK, akalbers)
+
+    plot(SEAK, xlab="Northing", ylab="Easting")
+    # #lines(segSP$x, segSP$y,col='red')
+    # points(hbw_Dist$x, hbw_Dist$y, col="blue")
+
+```
+
+### soap film boundaries/surfaces
+
+#### study area (LSF3simpleOCN)
+
+simiplified LSF3ocean shapefile (islands with unserveyed narrow channel between merged)
+
+```{r simplified SEAK, eval=FALSE, include= TRUE}
+LSF3simpleOCN<- readOGR(dsn="C:/Users/aschi/Dropbox/My PC (DESKTOP-3OIUQ56)/Documents/UAF/MS/data and analysis/maps+spatial data/HAPODAS GIS/HAPODAS shape files/SEAK simplifications",layer="new_simpleOCN") # this is a very simplified outline of the defined study area (used to design the survey)
+LSF3ocean<- spTransform(LSF3simpleOCN, CRSobj = akalbers)
+
+which(rgeos::gIsValid(LSF3ocean)==F)
+
+   save(LSF3ocean,file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DATA/SP_innerSoap.Rda")
+
+# par(mar=c(0,0,0,0))
+# plot(LSF3ocean, col="cornflowerblue")
+
+```
+
+#### soap film surface
+
+The soap film surface of the *LSF3surveyArea* to build the knot grid on:
+
+```{r soap film surface for knotgrid: LSF3surveyArea, eval=FALSE, include= TRUE}
+
+   LSF3oceandf <- broom::tidy(LSF3ocean)
+
+   ###
+   LSF3oceancoords <- LSF3oceandf %>% dplyr::select(long,lat,piece)
+   names(LSF3oceancoords) <- c("x", "y", "piece")
+   borderlist <- split(LSF3oceancoords, LSF3oceancoords$piece)
+   names(borderlist)
+   ###
+
+   LSF3surveyArea <- lapply(borderlist, `[`, c(1,2))
+   nr <- seq(1,9)
+   ###
+
+   LSF3surveyArea <- lapply(nr, function(n) as.list.data.frame(LSF3surveyArea[[n]]))
+
+   #And then check that the border and knots are in order with the soap_check function
+
+   par(mar=c(0,0,1,0))
+   soap_check(bnd = LSF3surveyArea)
+
+   save(LSF3surveyArea, file= "~/UAF/MS/data and analysis/HAPODAS/LSF3surveyArea.rda")
+
+
+load("~/UAF/MS/data and analysis/HAPODAS/LSF3surveyArea.rda")
+
+```
+
+#### knotgrid
+
+5km knot spacing construction: 'LSF3knots'
+
+```{r define interior LSF3knotskm, eval=FALSE, include= TRUE}
+# make grid from extent of observations 
+
+      LSF3oceandf <- broom::tidy(LSF3ocean)
+
+         Nx5 <- floor((max(LSF3oceandf$long)-min(LSF3oceandf$long))/5000) ## 538
+         Ny5 <- floor((max(LSF3oceandf$lat)-min(LSF3oceandf$lat))/5000) ## 503
+
+         xknot5 <- seq(min(LSF3oceandf$long),max(LSF3oceandf$long), length.out= Nx5)
+         yknot5 <- seq(min(LSF3oceandf$lat),max(LSF3oceandf$lat), length.out= Ny5)
+
+      # setup knots
+      LSF3knotgrid <- expand.grid(xknot5,yknot5)
+      names(LSF3knotgrid) <- c("x","y")
+      LSF3knots <- LSF3knotgrid[with(LSF3knotgrid, inSide(bnd = LSF3surveyArea, x, y)), ]## remove knots outside the survey area
+
+      #save(LSF3knots, file="~/UAF/MS/data and analysis/HAPODAS/LSF3knotskmspacing.Rda")
+
+
+      par(mar=c(0,0,1,0))
+      soap_check(bnd = LSF3surveyArea, knots=LSF3knots)
+      lines(covSegdata.LSF3soap@coords,col='light blue')
+      #points(hbw_obs.LSF3soap@coords, col="white", pch =".")
+
+
+
+load(file="~/UAF/MS/data and analysis/HAPODAS/LSF3knotskmspacing.Rda")
+
+```
+
+#### survey area with 3.75 buffer
+
+3.75km buffer(use with 5km knot spacing)
+
+```{r 3.75km buffer, eval=FALSE, include= TRUE}
+
+      # #
+      # 
+      LSF3_Buff3.75k <- readOGR(dsn="C:/Users/aschi/Dropbox/My PC (DESKTOP-3OIUQ56)/Documents/UAF/MS/data and analysis/maps+spatial data/HAPODAS GIS/HAPODAS shape files/SEAK buffers",layer="new2OCN_Buff3.75")
+
+      LSF3_Buff3.75k <- spTransform(LSF3_Buff3.75k, CRSobj = akalbers)
+
+      which(rgeos::gIsValid(LSF3_Buff3.75k)==F)
+
+      LSF3df_buff3.75k <- broom::tidy(LSF3_Buff3.75k)
+      
+   #save(LSF3_Buff3.75k,file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DATA/SP_LSF3buffer.Rda")
+
+      ###
+      LSF3coords_buff3.75k <- LSF3df_buff3.75k %>% dplyr::select(long,lat,piece)
+      names(LSF3coords_buff3.75k) <- c("x", "y", "piece")
+      LSF3borderlist_buff3.75k <- split(LSF3coords_buff3.75k, LSF3coords_buff3.75k$piece)
+      names(LSF3borderlist_buff3.75k)
+      ###
+
+      LSF3SAbuff3.75km <- lapply(LSF3borderlist_buff3.75k, `[`, c(1,2))
+      nr <- seq(1,8)
+      ###
+
+      LSF3SAbuff3.75km <- lapply(nr, function(n) as.list.data.frame(LSF3SAbuff3.75km[[n]]))
+      # 
+      # #And then check that the border and knots are in order with the soap_check function
+      # 
+      # par(mar=c(0,0,1,0))
+      # soap_check(bnd = LSF3SAbuff3.75km)
+      # soap_check(bnd = LSF3SAbuff3.75km, knots = LSF3knots)
+      # 
+      # 
+      # #save(LSF3SAbuff3.75km, file="~/UAF/MS/data and analysis/HAPODAS/LSF3buffer.Rda")
+
+load(file="~/UAF/MS/data and analysis/HAPODAS/LSF3buffer.Rda")
+
+
+```
+
+#### set boundary conditions
+
+```{r set boundary condition to zero, eval=FALSE, include= TRUE}
+nr <- seq(1,8)
+surveyArea_0 <- lapply(nr, function(n) LSF3SAbuff3.75km[[n]]<- c(LSF3SAbuff3.75km[[n]], list(f = rep(0, length(LSF3SAbuff3.75km[[n]]$x)))))
+Buffer_bnd0<- surveyArea_0
+      # par(mar=c(0,0,1,0))
+      # soap_check(bnd = surveyArea_0)
+      # soap_check(bnd = surveyArea_0, knots = LSF3knots)
+save(Buffer_bnd0, file = "~/UAF/MS/data and analysis/HAPODAS/Buffer_bnd0.Rda")
+
+```
+
+```{r find areas w/out boundary set to 0 and replace w/ NA, eval=FALSE, include= TRUE}
+
+
+#Soap_0_buffA1 
+
+fff <- Soap_0_buffA1[[1]][["f"]]
+xxx <- Soap_0_buffA1[[1]][["x"]]
+yyy <- Soap_0_buffA1[[1]][["y"]]
+
+DF <- data.frame(fff,xxx,yyy)
+DF$index <- seq(from =1, by=1, length.out=length(DF$fff))
+
+# openings to ocean in order counter-clock-wise from top
+A <- data.frame(y=c(1045942,1028017), x= c(1001685,1015511))
+B <- data.frame(y=c(854869,833451), x= c(1179819,1207957))
+C <- data.frame(y=c(837449,848744), x= c(1222112,1243510))
+D <- data.frame(y=c(766392,784364), x= c(1391052,1425770))
+E <- data.frame(y=c(790324,796966), x= c(1432990,1449784))
+
+
+AAA <- which((DF$xxx <= A$x[2]) & (DF$xxx >= A$x[1]) &
+                (DF$yyy <= A$y[1]) & (DF$yyy >= A$y[2]))
+
+BBB <- which((DF$xxx <= B$x[2]) & (DF$xxx >= B$x[1]) &
+                (DF$yyy <= B$y[1]) & (DF$yyy >= B$y[2]))
+
+CCC <- which((DF$xxx <= C$x[2]) & (DF$xxx >= C$x[1]) &
+                (DF$yyy <= C$y[2]) & (DF$yyy >= C$y[1]))
+
+DDD <- which((DF$xxx <= D$x[2]) & (DF$xxx >= D$x[1]) &
+                (DF$yyy <= D$y[2]) & (DF$yyy >= D$y[1]))
+
+EEE <- which((DF$xxx <= E$x[2]) & (DF$xxx >= E$x[1]) &
+                (DF$yyy <= E$y[2]) & (DF$yyy >= E$y[1]))
+
+
+ggg <- c(AAA,BBB,CCC,DDD,EEE)
+
+
+for(i in seq_along(DF$fff)){
+   if (DF$index[i] %in% ggg) {DF$fff[i] <- NA}
+   else (DF$fff[i] <- 0)
+}
+
+Soap_0_buffA1[[1]][["f"]] <- DF$fff
+
+
+
+save(Soap_0_buffA1, file = "~/UAF/MS/data and analysis/HAPODAS/Soap_0_buffA1.Rda")
+
+
+```
+
+## Soapfilm adjusted data
+
+Data outside the defined `LSF3surveyArea` must be removed for the soapfilm to work \### segdata.LSF3soap
+
+```{r remove segments outside soapfilm, eval=FALSE, include= TRUE}
+x <- segSP$x; y <- segSP$y 
+onoff <- inSide(x=x,y=y, bnd=as.list(LSF3surveyArea))
+rm(x,y)
+segdata.LSF3soap <- segSP[onoff,]
+```
+
+```{r remove segments outside soapfilm covSegSP, eval=FALSE, include= TRUE}
+x <- covSegSP$x; y <- covSegSP$y 
+onoff <- inSide(x=x,y=y, bnd=as.list(LSF3surveyArea))
+rm(x,y)
+covSegdata.LSF3soap <- covSegSP[onoff,]
+```
+
+### hbw_obs.LSF3soap
+
+```{r remove observations outside soapfilm, eval=FALSE, include= TRUE}
+
+hbw_obsSP <- spTransform(hbw_obsSP, CRSobj = akalbers) ## 375 observations
+
+x <- hbw_obsSP$x; y <- hbw_obsSP$y
+onoff <- inSide(x=x,y=y, bnd=as.list(LSF3surveyArea))
+rm(x,y)
+hbw_obs.LSF3soap <- hbw_obsSP[onoff,] ## 373 observations
+```
+
+```{r LSF3.soapdata, eval=FALSE, include= TRUE}
+
+#save(segdata.LSF3soap, covSegdata.LSF3soap, hbw_obs.LSF3soap, file= "~/UAF/MS/data and analysis/HAPODAS/LSF3soapdata.Rda")
+
+load(file= "~/UAF/MS/data and analysis/HAPODAS/LSF3soapdata.Rda")
+
+
+```
+
+# =========
+
+# simple DSMs (no soap)
+
+## x & y
+
+```{r xy_nb_k50mcds, eval=FALSE, include= TRUE}
+dsm_nb_xy <- dsm(abundance.est~s(x, y, k=50),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, segment.data = hapodas_Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nb_xy)
+###xy_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+vis.gam(dsm_nb_xy, view=c("x","y"), plot.type="contour", 
+        too.far=0.1, main="s(x,y) (link scale)", asp=1)
+plot(dsm_nb_xy, scheme=2)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+```{r xy_nb_k25cds, eval=FALSE, include= TRUE}
+# dsm_nb_xy_cds <- dsm(abundance.est~s(x, y, k=25),
+#                  ddf.obj=hbw_hr_cds.05, segment.data = hapodas_Segdata, 
+#                  observation.data=hbw_Obs_t,
+#                  family=nb())
+# 
+# summary(dsm_nb_xy_cds)
+# 
+# vis.gam(dsm_nb_xy_cds, view=c("x","y"), plot.type="contour", 
+#         too.far=0.1, main="s(x,y) (link scale)", asp=1)
+```
+
+```{r x+y_nb_mcds, eval=FALSE, include= TRUE}
+# dsm_nb_x_y <- dsm(abundance.est~s(x)+s(y),
+#                  ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, segment.data = hapodas_Segdata, 
+#                  observation.data=hbw_Obs_t,
+#                  family=nb())
+# 
+# summary(dsm_nb_x_y)
+# 
+# vis.gam(dsm_nb_x_y, view=c("x","y"), plot.type="contour", 
+#         too.far=0.1, main="s(x,y) (link scale)", asp=1)
+```
+
+```{r compare: x+y_nb_mcds v xy_nb_k50mcds, fig.width=12, fig.height=5, eval=FALSE, include= TRUE}
+# par(mfrow=c(1,2))
+# vis.gam(dsm_nb_xy, view=c("x","y"), plot.type="contour", 
+#         too.far=0.1, main="s(x,y, k=25) (link scale)", asp=1)
+# vis.gam(dsm_nb_x_y, view=c("x","y"), plot.type="contour", 
+#         too.far=0.1, main="s(x) + s(y) (link scale)", asp=1)
+```
+
+```{r xy_nb_k200mcds, eval=FALSE, include= TRUE}
+# tictoc::tic()
+# dsm_nb_xyK <- dsm(abundance.est~s(x, y, k=200),
+#                  ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, segment.data = hapodas_Segdata, 
+#                  observation.data=hbw_Obs_t,
+#                  family=nb())
+# tictoc::toc()
+# 
+# summary(dsm_nb_xyK)
+# 
+# vis.gam(dsm_nb_xyK, view=c("x","y"), plot.type="contour", 
+#         too.far=0.1, main="s(x,y) (link scale)", asp=1)
+```
+
+```{r compare: xy_nb_k50mcds v xy_nb_k200mcds, fig.width=12, fig.height=5, eval=FALSE, include= TRUE}
+# par(mfrow=c(1,2))
+# vis.gam(dsm_nb_xy, view=c("x","y"), plot.type="contour", 
+#         too.far=0.1, main="s(x,y, k=25) (link scale)", asp=1)
+# vis.gam(dsm_nb_xyK, view=c("x","y"), plot.type="contour", 
+#         too.far=0.1, main="s(x,y) (link scale)", asp=1)
+```
+
+```{r xy_tw_k50mcds, eval=FALSE, include= TRUE}
+tictoc::tic()
+dsm_tw_xy <- dsm(abundance.est~s(x, y, k=50),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, segment.data = hapodas_Segdata,
+                 observation.data=hbw_Obs_t,
+                 family=tw())
+tictoc::toc()
+
+summary(dsm_tw_xy)
+
+vis.gam(dsm_tw_xy, view=c("x","y"), plot.type="contour",
+        too.far=0.1, main="s(x,y) (link scale)", asp=1)
+```
+
+### summary and interpretation
+
+```{r summarize xy simple models, eval=FALSE, include= TRUE}
+# function to extract various bits of information from
+# a model object, you can adapt to be more informative
+summarize_dsm <- function(model){
+   summ <- summary(model)
+   data.frame(response = model$family$family,
+              terms    = paste(rownames(summ$s.table), collapse=", "),
+              AIC      = AIC(model),
+              edf      = summ[["edf"]],
+              DevExp   = (summ[["dev.expl"]]*100),
+              deviance = model[["deviance"]],
+              p-value  = summ[["p.pv"]][["(Intercept)"]]
+   )
+}
+# make a list of models, in this case just the count models
+model_list <- list(dsm_nb_xy, dsm_nb_x_y) #, dsm_tw_xy, dsm_tw_x_y
+# run this over each model in the list and make a table
+library(plyr)
+summary_table <- ldply(model_list, summarize_dsm)
+row.names(summary_table) <- c("dsm_nb_xy", "dsm_nb_x_y") #, "dsm_tw_xy", "dsm_tw_x_y"
+```
+
+We can then again use the `kable` function to make a table, in this case sorting by AIC (though note that we can't compare between Tweedie and negative binomial models as the former is a continuous distribution and the latter isn't):
+
+```{r sort xy simple models-table, eval=FALSE, include= TRUE}
+ summary_table <- summary_table[order(summary_table$response),]
+
+ summary_table <- summary_table[order(summary_table$AIC),]
+```
+
+```{r print-table, results="asis", eval=FALSE, include= TRUE}
+kable(summary_table)
+```
+
+```{r check fit-xy simple models, eval=FALSE, include= TRUE}
+
+#par(mfrow=c(1,2))
+qq.gam(dsm_nb_xy, main="s(x,y, k=25) (link scale)", asp=1, rep=100)
+#qq.gam(dsm_nb_xyK, main="s(x,y) (link scale)", asp=1, rep=100)
+```
+
+```{r check fit nb v tw, eval=FALSE, include= TRUE}
+
+par(mfrow=c(1,2))
+qq.gam(dsm_nb_xy, main="s(x,y, k=25) (nb link scale)", asp=1, rep=1000)
+qq.gam(dsm_tw_xy, main="s(x,y, k=25) (tw link scale)", asp=1, rep=1000)
+```
+
+## covariates only
+
+### single covariate
+
+```{r depth_nb_mcds, eval=FALSE, include= TRUE}
+dsm_nb_depth <- dsm(abundance.est~s(depth),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = cov3Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nb_depth)
+###depth_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+#vis.gam(dsm_nb_depth, view=c("depth"), plot.type="contour",too.far=0.1, main="s(x,y) (link scale)", asp=1)
+#
+plot(dsm_nb_depth)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+```{r slope_nb_mcds, eval=FALSE, include= TRUE}
+dsm_nb_slope <- dsm(abundance.est~s(slope),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = cov3Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nb_slope)
+###slope_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+#vis.gam(dsm_nb_slope, view=c("slope"), plot.type="contour",too.far=0.1, main="s(x,y) (link scale)", asp=1)
+#
+plot(dsm_nb_slope)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+```{r d2s_nb_mcds, eval=FALSE, include= TRUE}
+dsm_nb_d2s <- dsm(abundance.est~s(d2s),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = cov3Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb()) ## d2s = distance to shore
+
+summary(dsm_nb_d2s)
+###d2s_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+#vis.gam(dsm_nb_d2s, view=c("d2s"), plot.type="contour",too.far=0.1, main="s(x,y) (link scale)", asp=1)
+#
+plot(dsm_nb_d2s)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+### 2 covariates
+
+```{r depth_slope_nb_mcds, eval=FALSE, include= TRUE}
+dsm_nb_depth_slope <- dsm(abundance.est ~ s(depth) + s(slope),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = cov3Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nb_depth_slope)
+###depth_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+#vis.gam(dsm_nb_depth_slope, view=c("depth"), plot.type="contour",too.far=0.1, main="s(x,y) (link scale)", asp=1)
+#
+plot(dsm_nb_depth_slope)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+```{r d2s_slope_nb_mcds, eval=FALSE, include= TRUE}
+dsm_nb_d2s_slope <- dsm(abundance.est ~ s(d2s) + s(slope),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = cov3Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nb_d2s_slope)
+###d2s_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+#vis.gam(dsm_nb_d2s_slope, view=c("d2s"), plot.type="contour",too.far=0.1, main="s(x,y) (link scale)", asp=1)
+#
+plot(dsm_nb_d2s_slope)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+```{r depth_d2s_nb_mcds, eval=FALSE, include= TRUE}
+dsm_nb_depth_d2s <- dsm(abundance.est ~ s(depth) + s(d2s),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = cov3Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nb_depth_d2s)
+###depth_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+#vis.gam(dsm_nb_depth_d2s, view=c("depth"), plot.type="contour",too.far=0.1, main="s(x,y) (link scale)", asp=1)
+#
+plot(dsm_nb_depth_d2s)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+## x, y, & covariates
+
+```{r xy_depth_slope_d2s_nb_k50mcds, eval=FALSE, include= TRUE}
+dsm_nb_xy_depth_slope_d2s <- dsm(abundance.est ~ s(x, y, k=50)+
+                                    s(log(DEPTH)) + s(slope) + s(log(d2s)),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = cov3Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nb_xy_depth_slope_d2s)
+###xy_depth_slope_d2s_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+vis.gam(dsm_nb_xy_depth_slope_d2s, view=c("x","y"), plot.type="contour", 
+        too.far=0.1, main="s(x,y) (link scale)", asp=1)
+plot(dsm_nb_xy_depth_slope_d2s, scheme=2)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+```{r xy_depth_slope_d2s_nb_ts, eval=FALSE, include= TRUE}
+dsm_nbts_xy_depth_slope_d2s <- dsm(abundance.est ~ s(x, y, bs="ts")+
+                                    s(depth, bs="ts") + 
+                                      s(slope, bs="ts") + 
+                                      s(d2s, bs="ts"),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = cov3Segdata, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nbts_xy_depth_slope_d2s)
+###xy_depth_slope_d2s_nbts_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+vis.gam(dsm_nbts_xy_depth_slope_d2s, view=c("x","y"), plot.type="contour", 
+        too.far=0.1, main="s(x,y) (link scale)", asp=1)
+plot(dsm_nbts_xy_depth_slope_d2s, scheme=2)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+## no soap +covs
+
+```{r dsm_xy_S.D.D2s_nb_k50mcds, eval=FALSE, include= TRUE}
+dsm_xy_S.LD.LD2s <- dsm(abundance.est ~ s(x, y, k=50)+
+                                    s(log(DEPTH)) + s(log(slope)) + s(log(d2s)),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = SegdataCovs, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_xy_S.LD.LD2s)
+###xy_logD.D2s_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+vis.gam(dsm_xy_S.LD.LD2s, view=c("x","y"), plot.type="contour", 
+        too.far=0.1, main="s(x,y) (link scale)", asp=1)
+plot(dsm_xy_S.LD.LD2s, scheme=2)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+### + log covs
+
+```{r xy_logD.D2s_nb_k50mcds, eval=FALSE, include= TRUE}
+dsm_xy_logD.D2s <- dsm(abundance.est ~ s(x, y, k=50)+
+                                    s(log(DEPTH)) + s(slope) + s(log(d2s)),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = SegdataCovs, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_xy_logD.D2s)
+###xy_logD.D2s_nb_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+vis.gam(dsm__xy_logD.D2s, view=c("x","y"), plot.type="contour", 
+        too.far=0.1, main="s(x,y) (link scale)", asp=1)
+plot(dsm_xy_logD.D2s, scheme=2)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+```{r xy_logD.D2s_nb_ts, eval=FALSE, include= TRUE}
+dsm_nbts_xy_logD.D2s <- dsm(abundance.est ~ s(x, y, bs="ts")+
+                                    s(depth, bs="ts") + 
+                                      s(slope, bs="ts") + 
+                                      s(d2s, bs="ts"),
+                 ddf.obj=hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = SegdataCovs, 
+                 observation.data=hbw_Obs_t,
+                 family=nb())
+
+summary(dsm_nbts_xy_logD.D2s)
+###xy_logD.D2s_nbts_k50mcds-visgam, fig.width=5, fig.height=5, fig.cap="Fitted surface (on link scale) for s(x,y)"}
+vis.gam(dsm_nbts_xy_logD.D2s, view=c("x","y"), plot.type="contour", 
+        too.far=0.1, main="s(x,y) (link scale)", asp=1)
+plot(dsm_nbts_xy_logD.D2s, scheme=2)
+# par(new=TRUE)
+# points(hbw_Obs_t$longs,hbw_Obs_t$lats)
+
+```
+
+# =========
+
+# Soap DSMs
+
+naming format: covs_S_knotgridspacing#\_buffersize#\_k_nmax \## x & y \#### 5km knots 3.75km buffer 150nmax :
+
+```{r dsm: xysoapLSF3, eval=FALSE, include= TRUE}
+tictoc::tic()
+xysoapLSF3 <- dsm(abundance.est~s(x, y, bs="so", k=4,
+                                      xt=list(bnd=LSF3SAbuff3.75km, nmax=150)),
+                 ddf.obj = hbw_hr_mcds_CUE_SIGHTOBS, segment.data = segdata.LSF3soap,
+                 observation.data=hbw_obs.LSF3soap, knots=LSF3knots,##
+                 family=tw(), method="REML")
+tictoc::toc()
+```
+
+```{r save/load: xysoapLSF3, eval=FALSE, include= TRUE}
+ #save(xysoapLSF3, file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DSMs/xysoapLSF3.RData")
+#
+load( file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DSMs/xysoapLSF3.RData")
+```
+
+```{r summary: xysoapLSF3 , eval=FALSE, include= TRUE }
+summary(xysoapLSF3)
+```
+
+```{r vis.gam plot: xysoapLSF3, eval=FALSE, include= TRUE}
+#par(mfrow=c(1,2))
+vis.gam(xysoapLSF3, view=c("x","y"), plot.type="contour", type="response", 
+        main="s(x,y) (response scale)",n.grid = 95, asp=1, color = "heat", nCol = 100)
+
+vis.gam(xysoapLSF3, view=c("x","y"), plot.type="contour", type="link", 
+        main="s(x,y) (link scale)",n.grid = 95, asp=1, color = "heat", nCol = 100,
+        too.far = )
+
+vis.gam(xysoapLSF3, view=c("x","y"), plot.type="persp", type="link", 
+        main="s(x,y) (link scale)",n.grid = 95, asp=1, color = "heat", nCol = 100)
+vis.gam(xysoapLSF3, view=c("x","y"), plot.type="persp", type="response", 
+        main="s(x,y) (response scale)",n.grid = 95, asp=1, color = "heat", nCol = 100)
+```
+
+```{r plot: xysoapLSF3, eval=FALSE, include= TRUE}
+plot(xysoapLSF3)
+
+
+```
+
+```{r gam.check: xysoapLSF3, eval=FALSE, include= TRUE}
+gam.check(xysoapLSF3)
+
+```
+
+```{r check fit :xysoapLSF3, eval=FALSE, include= TRUE}
+
+qq.gam(xysoapLSF3, main="xysoapLSF3", asp=1, rep=100)
+
+rqgam.check(xysoapLSF3)
+```
+
+```{r prediction attempt 1: xysoapLSF3, eval=FALSE, include= TRUE}
+
+xysoapLSF3_pred1 <- predict(xysoapLSF3, newdata = LSF3knots, off.set = rep(gridarea,length(knots5$x)))
+
+```
+
+```{r uncerrtainty xysoapLSF3, eval=FALSE, include= TRUE}
+
+dsm.var.gam(xysoapLSF3, pred.data = # ? #
+               )
+
+
+```
+
+## x, y, & covariates
+
+### single covariate
+
+```{r xySdepth, eval=FALSE, include= TRUE}
+xySdepth <- dsm(abundance.est ~ s(x, y, bs="so", k=5,
+                                      xt=list(bnd=LSF3SAbuff3.75km, nmax=150))+
+                                          s(DEPTH, bs="ts"),
+                 ddf.obj = hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = covSegdata.LSF3soap,
+                 observation.data=hbw_obs.LSF3soap ,
+                 knots=LSF3knots,##
+                 family=tw(), method="REML")
+
+
+```
+
+```{r single cov summary, eval=FALSE, include= TRUE}
+#xySdepth <- xysoap_5_3.75_5_150
+
+#save(xySdepth, file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DSMs/xySdepth.RData")
+
+load( "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DSMs/xySdepth.RData")
+
+summary(xySdepth)
+
+plot(xySdepth)
+
+```
+
+```{r xySlogD, eval=FALSE, include= TRUE}
+xySlogD <- dsm(abundance.est ~ s(x, y, bs="so", k=5,
+                                      xt=list(bnd=LSF3SAbuff3.75km, nmax=150))+
+                                          s(log(DEPTH), bs="ts"),
+                 ddf.obj = hbw_hr_mcds_CUE_SIGHTOBS, 
+                 segment.data = covSegdata.LSF3soap,
+                 observation.data=hbw_obs.LSF3soap , 
+                 knots=LSF3knots,##
+                 family=tw(), method="REML")
+
+
+```
+
+```{r xySlogD single cov summary, eval=FALSE, include= TRUE}
+
+save(xySlogD, file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DSMs/xySlogD.RData")
+
+load( "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DSMs/xySlogD.RData")
+
+summary(xySlogD)
+
+plot(xySlogD)
+
+```
+
+### 2 covariates
+
+```{r save full data, eval=FALSE, include= TRUE}
+save(hbw_Dist, hbw_Obs, hapodas_Segdata, hbw_hr_cds.05, hbw_hr_mcds_CUE_SIGHTOBS,file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DATA/hbwDSMdata2km.Rdata")
+
+```
+
+### 3 covariates
+
+```{r dsm: xySlogd2sD, eval=FALSE, include= TRUE}
+tictoc::tic()
+xySlogd2sD <- dsm(abundance.est~s(x, y, bs="so", k=4,
+                               xt=list(bnd=LSF3SAbuff3.75km, nmax=150))+
+                s(log(DEPTH)) + 
+                s(slope) + 
+                s(log(d2s)),
+                ddf.obj = hbw_hr_mcds_CUE_SIGHTOBS, 
+                segment.data = covSegdata.LSF3soap,
+                observation.data=hbw_obs.LSF3soap, 
+                knots=LSF3knots,##
+                 family=tw(), method="REML")
+tictoc::toc()
+```
+
+```{r save/load: xySlogd2sD, eval=FALSE, include= TRUE}
+ #save(xySlogd2sD, file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DSMs/xySlogd2sD.RData")
+#
+load( file= "~/UAF/MS/data and analysis/HAPODAS/HAPODAS DSMs/xySlogd2sD.RData")
+```
+
+```{r summary: xySlogd2sD , eval=FALSE, include= TRUE }
+summary(xySlogd2sD)
+```
+
+```{r vis.gam plot: xySlogd2sD, eval=FALSE, include= TRUE}
+#par(mfrow=c(1,2))
+vis.gam(xySlogd2sD, view=c("x","y"), plot.type="contour", type="response", 
+        main="s(x,y) (response scale)",n.grid = 95, asp=1, color = "heat", nCol = 100)
+
+vis.gam(xySlogd2sD, view=c("x","y"), plot.type="contour", type="link", 
+        main="s(x,y) (link scale)",n.grid = 95, asp=1, color = "heat", nCol = 100,
+        too.far = )
+
+vis.gam(xySlogd2sD, view=c("x","y"), plot.type="persp", type="link", 
+        main="s(x,y) (link scale)",n.grid = 95, asp=1, color = "heat", nCol = 100)
+vis.gam(xySlogd2sD, view=c("x","y"), plot.type="persp", type="response", 
+        main="s(x,y) (response scale)",n.grid = 95, asp=1, color = "heat", nCol = 100)
+```
+
+```{r plot xySlogd2sD, eval=FALSE, include= TRUE}
+plot(xySlogd2sD)
+
+```
+
+# =========
